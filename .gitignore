@@ -1,0 +1,15 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Built app bundle — ships as a Release asset, not in the repo
+*.app/
+
+# Xcode
+DerivedData/
+*.xcuserstate
+*.xcodeproj/xcuserdata/
+
+# macOS
+.DS_Store
