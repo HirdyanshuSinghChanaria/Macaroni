@@ -3,10 +3,10 @@
 **Per-app volume control for macOS, plus the small utilities you'd otherwise
 install five separate apps for.** Lives in the menu bar. Free and open source.
 
-<!-- Put a screen recording here before publishing — a GIF of the mixer sliders
-     moving while two apps play audio. This is the first thing anyone sees, and
-     it decides whether they keep reading. Drop it in docs/ and link it:
-     ![Macaroni](docs/demo.gif) -->
+![Macaroni's per-app volume mixer in action](docs/demo.gif)
+
+*Two apps playing at once, each with its own slider — turn one down without
+touching the other.*
 
 ## Why
 
@@ -23,25 +23,27 @@ plugin system, no account. The whole thing is a few thousand lines you can read
 in an afternoon — which is the point, if you'd rather understand the thing
 intercepting your audio than trust it.
 
-If you want the maximal version of this idea, see
-[Alternatives](#alternatives) below — there's a very good free one, and it's
-worth knowing about before you install this.
-
 ## What it does
+
+<img src="docs/panel.png" width="360" alt="The Macaroni panel">
 
 **App volume** — every app currently playing audio gets its own row and its own
 slider. Turn Spotify to 20% while a call stays at 100%. Levels are remembered
 per app, so an app you turned down comes back at that level next time it plays.
+(On Bluetooth headsets during a call, macOS may switch the headset to its
+hands-free profile while an app is being tapped, which lowers audio quality —
+that's a macOS behavior, not something Macaroni can override.)
 
 **Output control** — master volume, mute, and a dropdown to switch output
 device (speakers, headphones, AirPods) without opening System Settings.
 
-**Clipboard history** — the last 200 things you copied, in a searchable-by-eye
-list. Click to copy again. Copying something already in the list moves it to
-the top rather than duplicating it. Memory only — nothing is written to disk.
+**Clipboard history** — the last 200 things you copied, in a scrollable list.
+Click to copy again. Copying something already in the list moves it to the top
+rather than duplicating it. Memory only — nothing is written to disk, so
+nothing you copy outlives the app.
 
 **Network speed** — live download and upload rates in the menu bar, next to the
-icon, whether or not the panel is open.
+icon, whether or not the panel is open, plus session totals in the panel.
 
 **Scroll direction** — invert mouse scrolling independently of macOS's Natural
 Scrolling setting, so your mouse and trackpad can behave differently.
@@ -52,6 +54,8 @@ which app it belongs to, with sizes, before deleting anything. Everything
 starts unticked. Nothing is ever removed without you selecting it and
 confirming.
 
+![The junk files review window](docs/junk-files.png)
+
 ## Requirements
 
 - macOS 14.4 or later (per-app volume relies on Core Audio process taps, which
@@ -60,15 +64,7 @@ confirming.
 
 ## Install
 
-**Download** the latest `Macaroni.app` from
-[Releases](../../releases), move it to `/Applications`, and open it.
-
-The app isn't notarized (that needs a paid Apple Developer account), so the
-first launch needs **right-click → Open** instead of a double-click. macOS will
-warn you about an unidentified developer; that's expected for open-source apps
-distributed outside the App Store.
-
-**Or build it yourself** — you only need the Xcode Command Line Tools
+**Build it yourself** — you only need the Xcode Command Line Tools
 (`xcode-select --install`), not full Xcode:
 
 ```bash
@@ -77,6 +73,14 @@ cd Macaroni
 ./build-app.sh
 open Macaroni.app
 ```
+
+Move `Macaroni.app` to `/Applications` to keep it.
+
+A prebuilt app is also attached to the latest [Release](../../releases). It
+isn't notarized (that needs a paid Apple Developer account), so the first
+launch needs **right-click → Open** rather than a double-click — macOS will
+warn about an unidentified developer, which is expected for open-source apps
+distributed outside the App Store.
 
 ## Permissions
 
@@ -109,31 +113,6 @@ when you've actually changed something.
 Network speed comes from the kernel's own per-interface byte counters via
 `sysctl(NET_RT_IFLIST2)` — the same source `netstat -ib` uses — sampled once a
 second. It generates no traffic of its own.
-
-## Known limitations
-
-- **Bluetooth headsets during calls.** Tapping audio makes Macaroni a
-  recording client, which can cause macOS to switch a Bluetooth headset into
-  its low-quality hands-free profile. Per-app volume on Bluetooth during a call
-  may sound worse as a result. Under investigation.
-- **macOS ducks other audio during calls** and Macaroni can't prevent it —
-  that happens after our part of the audio path.
-- Clipboard history is text only, and is lost when the app quits.
-- The interface is dark only; it doesn't follow macOS light mode.
-
-## Alternatives
-
-Worth knowing about, honestly:
-
-- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — free, open
-  source, and does far more: per-app volume *and* per-app output routing,
-  window management, system monitoring, snippets, and plenty else. Signed,
-  notarized, installable via Homebrew. If you want one app that does
-  everything, install that one instead. Macaroni is Intel-friendly and much
-  smaller; Vorssaint is Apple Silicon only but vastly more capable.
-- **[SoundSource](https://rogueamoeba.com/soundsource/)** — $47, commercial,
-  and the most polished per-app audio tool on macOS. Worth the money if audio
-  routing is central to your work.
 
 ## License
 
