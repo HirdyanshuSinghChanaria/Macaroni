@@ -19,6 +19,10 @@ final class ScrollInvertManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
+    /// Trust state without prompting — used to clear a stale warning once the
+    /// user has actually fixed the permission.
+    var isTrusted: Bool { AXIsProcessTrusted() }
+
     /// Prompts the user (via the standard system dialog) if permission hasn't
     /// been granted yet. Returns the current trust state.
     @discardableResult

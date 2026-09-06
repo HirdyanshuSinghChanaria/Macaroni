@@ -42,6 +42,8 @@ struct ContentView: View {
         .frame(width: DS.panelWidth)
         .background(DS.panel)
         .foregroundStyle(DS.text)
+        // Permission may have been fixed since the panel last closed.
+        .onAppear { state.refreshAccessibilityStatus() }
     }
 
     // MARK: - Header
@@ -268,14 +270,35 @@ struct ContentView: View {
             .frame(height: 24)
 
             if state.showsAccessibilityHint {
-                Text("Needs Accessibility permission — grant it in System Settings, then relaunch.")
-                    .font(DS.label(9.5))
-                    .foregroundStyle(DS.amber)
-                    .fixedSize(horizontal: false, vertical: true)
+                accessibilityNotice
             }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
+    }
+
+    /// The confusing case this exists for: the box in System Settings is
+    /// already ticked, but macOS still refuses. Rebuilding or updating the app
+    /// changes its signature, and the permission is tied to the old one.
+    private var accessibilityNotice: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("macOS doesn't trust this copy of Macaroni yet.")
+                .font(DS.label(10))
+                .foregroundStyle(DS.amber)
+            Text("If Macaroni is already ticked in Accessibility, remove it with the − button and add it again — updating the app changes its signature, which invalidates the old permission.")
+                .font(DS.label(9))
+                .foregroundStyle(DS.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+            PanelButton(title: "Open Accessibility Settings", systemImage: "gear", prominent: true) {
+                state.openAccessibilitySettings()
+            }
+        }
+        .padding(8)
+        .background(DS.amber.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6).stroke(DS.amber.opacity(0.25), lineWidth: 1)
+        )
     }
 
     // MARK: - Network

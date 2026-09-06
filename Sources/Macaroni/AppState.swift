@@ -288,6 +288,24 @@ final class AppState: ObservableObject {
         audioPermissionDenied = perAppVolume.permissionDenied
     }
 
+    /// Clears the Accessibility warning once macOS actually trusts us — called
+    /// when the panel opens, so a fixed permission stops nagging immediately.
+    func refreshAccessibilityStatus() {
+        if scrollInvertManager.isTrusted {
+            showsAccessibilityHint = false
+        }
+    }
+
+    func openAccessibilitySettings() {
+        let panes = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy"
+        ]
+        for pane in panes {
+            if let url = URL(string: pane), NSWorkspace.shared.open(url) { return }
+        }
+    }
+
     /// macOS never re-prompts once permission is denied, so the only useful
     /// thing we can offer is a shortcut to the right settings pane.
     func openAudioPrivacySettings() {
