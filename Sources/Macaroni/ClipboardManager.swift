@@ -27,6 +27,7 @@ final class ClipboardManager {
     }
 
     func start() {
+        guard timer == nil else { return }
         // Added in .common modes rather than Timer.scheduledTimer's default:
         // while the menu bar panel is open the run loop is in a tracking mode,
         // and a default-mode timer would silently stop firing until it closes.

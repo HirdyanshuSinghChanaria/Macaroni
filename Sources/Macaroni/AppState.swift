@@ -34,10 +34,84 @@ final class AppState: ObservableObject {
     @Published var audioApps: [AudioProcessLister.AudioApp] = []
     @Published var gains: [pid_t: Float] = [:]
     @Published var perAppError: String?
+    @Published var audioPermissionDenied: Bool = false
     private var appPollTimer: Timer?
     private var diskSpaceTimer: Timer?
     /// Last-seen info per pid, so a controlled app keeps its row while paused.
     private var knownApps: [pid_t: AudioProcessLister.AudioApp] = [:]
+
+    // MARK: - Feature switches
+    //
+    // Switching a feature off doesn't just hide its section — it stops the work
+    // behind it: pollers are invalidated, taps released, event taps removed.
+    // Everything defaults to on.
+
+    @Published var showOutput: Bool { didSet { persist("feature.output", showOutput) } }
+    @Published var showAppVolume: Bool {
+        didSet { persist("feature.appVolume", showAppVolume); applyFeatureState() }
+    }
+    @Published var showClipboard: Bool {
+        didSet { persist("feature.clipboard", showClipboard); applyFeatureState() }
+    }
+    @Published var showMouse: Bool {
+        didSet { persist("feature.mouse", showMouse); applyFeatureState() }
+    }
+    @Published var showNetwork: Bool {
+        didSet { persist("feature.network", showNetwork); applyFeatureState() }
+    }
+    @Published var showDisk: Bool {
+        didSet { persist("feature.disk", showDisk); applyFeatureState() }
+    }
+
+    /// Absent key means "never set" — features start enabled.
+    private static func flag(_ key: String) -> Bool {
+        guard UserDefaults.standard.object(forKey: key) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    private func persist(_ key: String, _ value: Bool) {
+        UserDefaults.standard.set(value, forKey: key)
+    }
+
+    /// Brings the running managers in line with the switches.
+    private func applyFeatureState() {
+        if showClipboard {
+            clipboardManager.start()
+        } else {
+            clipboardManager.stop()
+            clipboardManager.clearHistory()
+        }
+
+        if showNetwork {
+            network.start()
+        } else {
+            network.stop()
+            downloadRate = 0
+            uploadRate = 0
+        }
+        updateMenuBarImage()
+
+        if showAppVolume {
+            refreshAudioApps()
+        } else {
+            // Release every tap — audio goes straight back to macOS.
+            perAppVolume.stopAll()
+            audioApps = []
+            gains = [:]
+        }
+
+        if !showMouse, scrollInvertManager.isEnabled {
+            scrollInvertManager.setEnabled(false)
+            scrollInverted = false
+        }
+
+        if showDisk {
+            refreshCapacity()
+        } else {
+            capacity = nil
+            scanResult = nil
+        }
+    }
 
     // Clipboard
     @Published var clipboardHistory: [ClipboardManager.Entry] = []
@@ -54,6 +128,22 @@ final class AppState: ObservableObject {
     @Published var capacity: DiskSpace.Capacity?
 
     init() {
+        showOutput = Self.flag("feature.output")
+        showAppVolume = Self.flag("feature.appVolume")
+        showClipboard = Self.flag("feature.clipboard")
+        showMouse = Self.flag("feature.mouse")
+        showNetwork = Self.flag("feature.network")
+        showDisk = Self.flag("feature.disk")
+
+        perAppVolume.onChange = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.perAppError = self.perAppVolume.lastError
+                self.audioPermissionDenied = self.perAppVolume.permissionDenied
+                self.refreshAudioApps()
+            }
+        }
+
         volumeManager.onChange = { [weak self] in
             DispatchQueue.main.async { self?.refreshAudio() }
         }
@@ -72,21 +162,21 @@ final class AppState: ObservableObject {
         }
 
         refreshAudio()
-        clipboardManager.start()
-        refreshAudioApps()
-        refreshCapacity()
-        network.start()
+        // Starts only what's switched on.
+        applyFeatureState()
 
         // Apps start and stop playing constantly, so keep the mixer live.
         let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.refreshAudioApps()
+            guard let self, self.showAppVolume else { return }
+            self.refreshAudioApps()
         }
         RunLoop.main.add(timer, forMode: .common)
         appPollTimer = timer
 
         // Free space moves slowly; no reason to stat the volume every 2s.
         let spaceTimer = Timer(timeInterval: 30.0, repeats: true) { [weak self] _ in
-            self?.refreshCapacity()
+            guard let self, self.showDisk else { return }
+            self.refreshCapacity()
         }
         RunLoop.main.add(spaceTimer, forMode: .common)
         diskSpaceTimer = spaceTimer
@@ -107,10 +197,16 @@ final class AppState: ObservableObject {
         networkInterface = network.interfaceName
         sessionReceived = network.sessionReceived
         sessionSent = network.sessionSent
-        menuBarImage = MenuBarLabel.render(
-            download: NetworkMonitor.formatRate(downloadRate),
-            upload: NetworkMonitor.formatRate(uploadRate)
-        )
+        updateMenuBarImage()
+    }
+
+    private func updateMenuBarImage() {
+        menuBarImage = showNetwork
+            ? MenuBarLabel.render(
+                download: NetworkMonitor.formatRate(downloadRate),
+                upload: NetworkMonitor.formatRate(uploadRate)
+              )
+            : MenuBarLabel.iconOnly()
     }
 
     // MARK: - Audio
@@ -147,6 +243,7 @@ final class AppState: ObservableObject {
     // MARK: - Per-app volume
 
     func refreshAudioApps() {
+        guard showAppVolume else { return }
         var apps = perAppVolume.currentApps()
         for app in apps { knownApps[app.pid] = app }
 
@@ -188,6 +285,19 @@ final class AppState: ObservableObject {
         gains[app.pid] = value
         perAppVolume.setUserGain(value, for: app)
         perAppError = perAppVolume.lastError
+        audioPermissionDenied = perAppVolume.permissionDenied
+    }
+
+    /// macOS never re-prompts once permission is denied, so the only useful
+    /// thing we can offer is a shortcut to the right settings pane.
+    func openAudioPrivacySettings() {
+        let panes = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy"
+        ]
+        for pane in panes {
+            if let url = URL(string: pane), NSWorkspace.shared.open(url) { return }
+        }
     }
 
     func isControlled(_ app: AudioProcessLister.AudioApp) -> Bool {

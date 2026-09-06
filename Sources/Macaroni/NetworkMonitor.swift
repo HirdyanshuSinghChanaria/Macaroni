@@ -30,6 +30,7 @@ final class NetworkMonitor {
     private var timer: Timer?
 
     func start() {
+        guard timer == nil else { return }
         sample()
         // .common mode so it keeps ticking while the panel is open and while
         // menus are tracking — the menu bar readout must never freeze.

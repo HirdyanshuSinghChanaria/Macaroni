@@ -1,5 +1,6 @@
 import Foundation
 import CoreAudio
+import AVFoundation
 
 /// Owns one `AppAudioEngine` per app whose volume has actually been changed.
 ///
@@ -19,6 +20,14 @@ final class PerAppVolumeManager {
 
     /// Surfaced to the UI when a tap fails (almost always a permission issue).
     private(set) var lastError: String?
+
+    /// True once we know macOS won't let us read app audio. The UI turns this
+    /// into a "grant permission" prompt rather than silently doing nothing.
+    private(set) var permissionDenied = false
+
+    /// Called when something changed behind the UI's back — a tap was released
+    /// by the watchdog, or a permission answer arrived.
+    var onChange: (() -> Void)?
 
     // MARK: - Reading
 
@@ -83,14 +92,79 @@ final class PerAppVolumeManager {
             return
         }
 
+        // Check before tapping. Creating a tap without permission still MUTES
+        // the app — it just never delivers audio — so tapping first and asking
+        // later silently kills the app's sound.
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined:
+            // The one prompt macOS will ever show. Retry once answered.
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if granted {
+                        self.permissionDenied = false
+                        self.apply(to: app)
+                    } else {
+                        self.releaseAndReset(app, reason: .denied)
+                    }
+                    self.onChange?()
+                }
+            }
+            return
+        default:
+            // Already denied. macOS never re-prompts, so don't try — say so.
+            releaseAndReset(app, reason: .denied)
+            return
+        }
+
         let engine = AppAudioEngine(pid: app.pid, processObjectID: app.objectID, gain: gain)
         do {
             try engine.start()
             engines[app.pid] = engine
             lastError = nil
+            permissionDenied = false
+            watchForStarvation(app, engine: engine)
         } catch {
             engine.stop()
             lastError = error.localizedDescription
+        }
+    }
+
+    private enum ReleaseReason {
+        case denied
+        case starved
+    }
+
+    /// Puts an app back exactly as it was: tap released (so it un-mutes), gain
+    /// back to 100%, saved level forgotten.
+    private func releaseAndReset(_ app: AudioProcessLister.AudioApp, reason: ReleaseReason) {
+        engines[app.pid]?.stop()
+        engines[app.pid] = nil
+        userGains[app.pid] = 1.0
+        if let bundleID = app.bundleID {
+            var gains = savedGains
+            gains.removeValue(forKey: bundleID)
+            savedGains = gains
+        }
+
+        permissionDenied = true
+        lastError = reason == .denied
+            ? "macOS is blocking audio access, so app volume can't work. Grant it in System Settings, then try again."
+            : "Couldn't read \(app.name)'s audio, so its volume was restored to 100%. This usually means audio permission is blocked."
+    }
+
+    /// The safety net. A tap can be created successfully, mute the app, and then
+    /// deliver nothing at all — that's what a blocked tap looks like. If no real
+    /// audio arrives shortly after starting, release it so nothing stays muted.
+    private func watchForStarvation(_ app: AudioProcessLister.AudioApp, engine: AppAudioEngine) {
+        guard app.isPlaying else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self, weak engine] in
+            guard let self, let engine, self.engines[app.pid] === engine else { return }
+            guard engine.activeFrames == 0 else { return }
+            self.releaseAndReset(app, reason: .starved)
+            self.onChange?()
         }
     }
 

@@ -31,6 +31,13 @@ final class AppAudioEngine {
     /// buffer at a slightly wrong volume — so no locking on the audio path.
     private let gainPointer: UnsafeMutablePointer<Float>
 
+    /// Frames that actually carried sound. Stays at zero if the tap is created
+    /// but starved — which is exactly what happens when audio permission was
+    /// denied: the tap succeeds, the app gets muted, and nothing is delivered.
+    private let activeFramePointer: UnsafeMutablePointer<Int64>
+
+    var activeFrames: Int64 { activeFramePointer.pointee }
+
     var gain: Float {
         get { gainPointer.pointee }
         set { gainPointer.pointee = max(0, min(1, newValue)) }
@@ -42,11 +49,14 @@ final class AppAudioEngine {
         self.ioQueue = DispatchQueue(label: "com.macaroni.audio.\(pid)", qos: .userInitiated)
         self.gainPointer = UnsafeMutablePointer<Float>.allocate(capacity: 1)
         self.gainPointer.initialize(to: max(0, min(1, gain)))
+        self.activeFramePointer = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        self.activeFramePointer.initialize(to: 0)
     }
 
     deinit {
         stop()
         gainPointer.deallocate()
+        activeFramePointer.deallocate()
     }
 
     // MARK: - Lifecycle
@@ -121,11 +131,17 @@ final class AppAudioEngine {
         aggregateID = newAggregateID
 
         let gainPtr = gainPointer
+        let framePtr = activeFramePointer
         var newIOProcID: AudioDeviceIOProcID?
         let ioStatus = AudioDeviceCreateIOProcIDWithBlock(
             &newIOProcID, aggregateID, ioQueue
         ) { _, inInputData, _, outOutputData, _ in
-            AppAudioEngine.render(input: inInputData, output: outOutputData, gain: gainPtr.pointee)
+            let active = AppAudioEngine.render(
+                input: inInputData,
+                output: outOutputData,
+                gain: gainPtr.pointee
+            )
+            framePtr.pointee &+= Int64(active)
         }
         guard ioStatus == noErr, let procID = newIOProcID else {
             throw EngineError.ioProcFailed(ioStatus)
@@ -259,11 +275,14 @@ final class AppAudioEngine {
     /// plays the audio at the wrong speed and pitch (the "slow motion" bug).
     /// So: map channels, and stretch or compress the frames we were given to
     /// exactly fill the frames we were asked for.
+    /// Returns the number of frames that carried actual sound, so the manager
+    /// can tell "tapped and working" from "tapped and starved".
+    @discardableResult
     private static func render(
         input: UnsafePointer<AudioBufferList>,
         output: UnsafeMutablePointer<AudioBufferList>,
         gain: Float
-    ) {
+    ) -> Int {
         let inputBuffers = UnsafeMutableAudioBufferListPointer(
             UnsafeMutablePointer(mutating: input)
         )
@@ -271,12 +290,23 @@ final class AppAudioEngine {
 
         guard let inLayout = Layout(inputBuffers), let outLayout = Layout(outputBuffers) else {
             silence(outputBuffers)
-            return
+            return 0
         }
         guard inLayout.frames > 0, outLayout.frames > 0 else {
             silence(outputBuffers)
-            return
+            return 0
         }
+
+        // Pure silence counts as nothing received — a denied tap delivers
+        // buffers full of zeroes rather than no buffers at all.
+        var peak: Float = 0
+        if let probe = inputBuffers[0].mData, inputBuffers[0].mDataByteSize > 0 {
+            vDSP_maxmgv(
+                probe.assumingMemoryBound(to: Float.self), 1, &peak,
+                vDSP_Length(Int(inputBuffers[0].mDataByteSize) / MemoryLayout<Float>.size)
+            )
+        }
+        let activeFrames = peak > 0.000_001 ? inLayout.frames : 0
 
         // Fast path: formats already agree, so it's a straight scale-and-copy.
         if inLayout.channels == outLayout.channels,
@@ -306,12 +336,12 @@ final class AppAudioEngine {
                     )
                 }
             }
-            return
+            return activeFrames
         }
 
         if gain <= 0.001 {
             silence(outputBuffers)
-            return
+            return activeFrames
         }
 
         // Slow path: resample by frame ratio and fan channels out.
@@ -335,6 +365,8 @@ final class AppAudioEngine {
                 write(outputBuffers, outLayout, frame: frame, channel: channel, interpolated * gain)
             }
         }
+
+        return activeFrames
     }
 
     // MARK: - Helpers

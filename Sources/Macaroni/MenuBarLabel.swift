@@ -14,6 +14,18 @@ enum MenuBarLabel {
     private static let gap: CGFloat = 3.5
     private static let height: CGFloat = 20
 
+    /// Used when the network readout is switched off — the item shrinks back to
+    /// just the glyph rather than showing a frozen 0 B/s.
+    static func iconOnly() -> NSImage {
+        let icon = symbol()
+        let image = NSImage(size: NSSize(width: 18, height: height), flipped: false) { _ in
+            icon?.draw(in: NSRect(x: 2, y: (height - iconSize) / 2, width: iconSize, height: iconSize))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     static func render(download: String, upload: String) -> NSImage {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .right

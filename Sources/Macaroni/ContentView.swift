@@ -3,19 +3,37 @@ import CoreAudio
 
 struct ContentView: View {
     @EnvironmentObject private var state: AppState
+    @State private var showingSettings = false
+
+    private var anyFeatureEnabled: Bool {
+        state.showOutput || state.showAppVolume || state.showClipboard
+            || state.showMouse || state.showNetwork || state.showDisk
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(DS.panelStroke)
 
-            VStack(alignment: .leading, spacing: 0) {
-                outputSection
-                appVolumeSection
-                clipboardSection
-                inputSection
-                networkSection
-                diskSection
+            if showingSettings {
+                settingsPanel
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    if state.showOutput { outputSection }
+                    if state.showAppVolume { appVolumeSection }
+                    if state.showClipboard { clipboardSection }
+                    if state.showMouse { inputSection }
+                    if state.showNetwork { networkSection }
+                    if state.showDisk { diskSection }
+                    if !anyFeatureEnabled {
+                        Text("Everything is switched off. Open Settings to turn something back on.")
+                            .font(DS.label(10.5))
+                            .foregroundStyle(DS.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 14)
+                    }
+                }
             }
 
             Divider().overlay(DS.panelStroke)
@@ -37,7 +55,7 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .semibold))
             Spacer(minLength: 4)
 
-            if let capacity = state.capacity {
+            if state.showDisk, let capacity = state.capacity {
                 Text("\(DiskSpace.format(capacity.free)) free")
                     .font(DS.mono(10.5))
                     .foregroundStyle(DS.textTertiary)
@@ -156,7 +174,9 @@ struct ContentView: View {
                 .frame(height: min(CGFloat(state.audioApps.count) * 29 - 5, 140))
             }
 
-            if let error = state.perAppError {
+            if state.audioPermissionDenied {
+                permissionNotice
+            } else if let error = state.perAppError {
                 Text(error)
                     .font(DS.label(9.5))
                     .foregroundStyle(DS.amber)
@@ -165,6 +185,31 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
+    }
+
+    /// Shown instead of failing silently. macOS won't ask again after a denial,
+    /// so the only thing that helps is pointing at the settings pane.
+    private var permissionNotice: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DS.amber)
+                Text(state.perAppError ?? "macOS is blocking audio access, so app volume can't work.")
+                    .font(DS.label(9.5))
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            PanelButton(title: "Open Privacy Settings", systemImage: "gear", prominent: true) {
+                state.openAudioPrivacySettings()
+            }
+        }
+        .padding(8)
+        .background(DS.amber.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6).stroke(DS.amber.opacity(0.25), lineWidth: 1)
+        )
     }
 
     // MARK: - Clipboard
@@ -367,10 +412,29 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Text("v1.0")
+            // Doubles as the way back out of settings.
+            Button {
+                withAnimation(.easeOut(duration: 0.12)) { showingSettings.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showingSettings ? "chevron.left" : "gearshape")
+                        .font(.system(size: 10, weight: .medium))
+                    Text(showingSettings ? "Back" : "Settings")
+                        .font(DS.label(10.5))
+                }
+                .foregroundStyle(showingSettings ? DS.accent : DS.textTertiary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Text("v1.1")
                 .font(DS.mono(9.5))
                 .foregroundStyle(DS.textFaint)
-            Spacer()
+            Text("·")
+                .font(DS.label(9.5))
+                .foregroundStyle(DS.textFaint)
             Button("Quit") { NSApp.terminate(nil) }
                 .buttonStyle(.plain)
                 .font(DS.label(10.5))
@@ -379,6 +443,84 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(DS.footerTint)
+    }
+
+    // MARK: - Settings
+
+    /// Each switch stops the work behind the feature, not just its section —
+    /// the captions say so, because "off" that keeps polling isn't off.
+    private var settingsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("SHOW IN PANEL")
+
+            featureToggle(
+                icon: "speaker.wave.2",
+                title: "Output",
+                detail: "Master volume, mute and device switching.",
+                isOn: $state.showOutput
+            )
+            featureToggle(
+                icon: "slider.vertical.3",
+                title: "App volume",
+                detail: "Per-app mixer. Off releases any audio taps immediately.",
+                isOn: $state.showAppVolume
+            )
+            featureToggle(
+                icon: "doc.on.clipboard",
+                title: "Clipboard history",
+                detail: "Off stops the pasteboard poller and clears stored entries.",
+                isOn: $state.showClipboard
+            )
+            featureToggle(
+                icon: "computermouse",
+                title: "Mouse",
+                detail: "Scroll inversion. Off removes the event tap.",
+                isOn: $state.showMouse
+            )
+            featureToggle(
+                icon: "arrow.up.arrow.down",
+                title: "Network speed",
+                detail: "Off stops the sampler and shrinks the menu bar item to just the icon.",
+                isOn: $state.showNetwork
+            )
+            featureToggle(
+                icon: "internaldrive",
+                title: "Disk",
+                detail: "Free space readout and the junk file scanner.",
+                isOn: $state.showDisk
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+    }
+
+    private func featureToggle(
+        icon: String,
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(isOn.wrappedValue ? DS.accent : DS.textTertiary)
+                .frame(width: 16, height: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(DS.label())
+                Text(detail)
+                    .font(DS.label(9.5))
+                    .foregroundStyle(DS.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 6)
+
+            PillToggle(isOn: isOn)
+                .padding(.top, 1)
+        }
     }
 
     private func emptyRow(_ text: String) -> some View {
