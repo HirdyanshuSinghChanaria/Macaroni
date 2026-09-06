@@ -452,7 +452,7 @@ struct ContentView: View {
 
             Spacer()
 
-            Text("v1.1")
+            Text("v1.2")
                 .font(DS.mono(9.5))
                 .foregroundStyle(DS.textFaint)
             Text("·")
